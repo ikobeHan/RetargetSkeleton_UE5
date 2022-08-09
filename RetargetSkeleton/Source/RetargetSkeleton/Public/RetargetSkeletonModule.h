@@ -31,6 +31,9 @@ private:
 	/** Handler for when Skeleton Retarget is selected */
 	void ExecuteRetargetSkeleton(TArray<TWeakObjectPtr<class USkeleton>> Skeletons);
 
+	/** Handler for when Skeleton Retarget is selected */
+	void ExecuteRetargetSkeleton_Retargeter(TArray<TWeakObjectPtr<class USkeleton>> Skeletons);
+
 	template <typename T>
 	static TArray<TWeakObjectPtr<T>> GetAssetWeakObjectPtrs(const TArray<UObject*>& InObjects)
 	{

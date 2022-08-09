@@ -11,6 +11,7 @@
 #include "ISkeletonEditorModule.h"
 #include "SkeletonRetargetCommands.h"
 #include "SkeletonRetargetFactory.h"
+#include "HAL/FileManager.h"
 
 
 #define LOCTEXT_NAMESPACE "FRetargetSkeletonModule"
@@ -77,7 +78,7 @@ void FRetargetSkeletonModule::ExtendSkeletonBrowserMenu()
 		FToolMenuSection& Section = Menu->FindOrAddSection("GetAssetActions");
 		Section.AddSubMenu(
 			"RetargetSkeltonSubmenu",
-			LOCTEXT("RetargetSkeltonSubmenu", "Retarget Skeleton to Another(UE4)"),
+			LOCTEXT("RetargetSkeltonSubmenu", "Retarget Skeleton to Another"),
 			LOCTEXT("RetargetSkeltonSubmenu_ToolTip", "Open retargeting Skeleton menu."),
 			FNewToolMenuDelegate::CreateLambda([this](UToolMenu* AlignmentMenu)
 				{
@@ -115,8 +116,8 @@ void FRetargetSkeletonModule::CreateRetargetSubMenu(FToolMenuSection& InSection)
 
 	InSection.AddMenuEntry(
 		"Skeleton_Retarget",
-		LOCTEXT("Skeleton_Retarget", "Retarget to Another Skeleton"),
-		LOCTEXT("Skeleton_RetargetTooltip", "Allow all animation assets for this skeleton retarget to another skeleton."),
+		LOCTEXT("Skeleton_Retarget", "Retarget to Another Skeleton ( UE4 RigMode )"),
+		LOCTEXT("Skeleton_RetargetTooltip", "通过 Rig & BoneMapping 来重定向整个骨架关联的动画,UE4采用的方式,骨骼不匹配的情况需要注意Rig的配置"),
 		FSlateIcon(FEditorStyle::GetStyleSetName(), "Persona.AssetActions.RetargetSkeleton"),
 		FUIAction(
 			FExecuteAction::CreateRaw(this, &FRetargetSkeletonModule::ExecuteRetargetSkeleton, Skeletons),
@@ -126,11 +127,22 @@ void FRetargetSkeletonModule::CreateRetargetSubMenu(FToolMenuSection& InSection)
 
 	InSection.AddMenuEntry(
 		"Skeleton_CreateRig",
-		LOCTEXT("Skeleton_CreateRig", "Create UE4 Rig"),
+		LOCTEXT("Skeleton_CreateRig", "Create Rig"),
 		LOCTEXT("Skeleton_CreateRigTooltip", "Create Rig from this skeleton Before RetargetSkeleton in OLD way."),
-		FSlateIcon(FEditorStyle::GetStyleSetName(), "Persona.AssetActions.RetargetSkeleton"),
+		FSlateIcon(FEditorStyle::GetStyleSetName(), "Persona.AssetActions.CreateAnimAsset"),
 		FUIAction(
 			FExecuteAction::CreateRaw(this, &FRetargetSkeletonModule::ExecuteCreateRig, Skeletons),
+			FCanExecuteAction()
+		)
+	);
+
+	InSection.AddMenuEntry(
+		"Skeleton_Retarget_ue5",
+		LOCTEXT("Skeleton_Retarget_ue5", "Retarget to Another Skeleton ( IKRetargeter Mode )"),
+		LOCTEXT("Skeleton_Retarget_ue5Tooltip", "通过 IKRetargeter 重定向骨架关联的全部动画，UE5推荐方式，但是带有rootmotion的动画 效果不是很完美"),
+		FSlateIcon(FEditorStyle::GetStyleSetName(), "Persona.AssetActions.AssignSkeleton"),
+		FUIAction(
+			FExecuteAction::CreateRaw(this, &FRetargetSkeletonModule::ExecuteRetargetSkeleton_Retargeter, Skeletons),
 			FCanExecuteAction()
 		)
 	);
@@ -148,6 +160,17 @@ void FRetargetSkeletonModule::ExecuteRetargetSkeleton(TArray<TWeakObjectPtr<USke
 {
 	FAssetTypeActions_SkeletonExtern SK;
 	SK.ExecuteRetargetSkeleton(Skeletons);
+}
+
+/** Handler for when Skeleton Retarget is selected */
+void FRetargetSkeletonModule::ExecuteRetargetSkeleton_Retargeter(TArray<TWeakObjectPtr<USkeleton>> Skeletons)
+{
+	FAssetTypeActions_SkeletonExtern SK;
+	SK.ExecuteRetargetSkeleton_IKRetargeter(Skeletons);
+	
+	
+	
+	
 }
 
 #undef LOCTEXT_NAMESPACE

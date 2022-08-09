@@ -42,6 +42,7 @@ public class RetargetSkeleton : ModuleRules
 				"Engine",
 				"Slate",
 				"SlateCore",
+
 				// ... add private dependencies that you statically link with here ...	
 				"AssetTools",
                 "EditorStyle",
@@ -57,7 +58,10 @@ public class RetargetSkeleton : ModuleRules
 				"ContentBrowserData",
 				"AssetTools",
 				"AnimGraph",
-				"Persona"
+				"Persona",
+				"IKRig",
+				"PropertyEditor",
+				"EditorScriptingUtilities"
 			}
 			);
 		

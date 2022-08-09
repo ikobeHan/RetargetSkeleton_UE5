@@ -14,6 +14,7 @@
 class FAssetTypeActions_SkeletonExtern
 {
 
+////////////////////////////// ue4 Rig&BoneMapping //////////////////////////
 public:
 	bool OnAssetCreated(TArray<UObject*> NewAssets) const;
 
@@ -37,4 +38,10 @@ public:
 	void RetargetAnimationHandler(USkeleton* OldSkeleton, USkeleton* NewSkeleton, bool bRemapReferencedAssets, bool bAllowRemapToExisting, bool bConvertSpaces, const EditorAnimUtils::FNameDuplicationRule* NameRule);
 
 	void CreateUniqueAssetName(const FString& InBasePackageName, const FString& InSuffix, FString& OutPackageName, FString& OutAssetName) const;
+
+
+///////////////////////////////  ue5 ikretargeter  ////////////////////////////
+public:
+	void ExecuteRetargetSkeleton_IKRetargeter(TArray<TWeakObjectPtr<USkeleton>> Skeletons);
+
 };

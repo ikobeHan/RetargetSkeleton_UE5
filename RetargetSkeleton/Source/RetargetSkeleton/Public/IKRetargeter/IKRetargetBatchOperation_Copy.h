@@ -7,9 +7,9 @@
 
 #include "CoreMinimal.h"
 #include "EditorAnimUtils.h"
+#include "IKRigEditor/Public/RetargetEditor/IKRetargetBatchOperation.h"
 
 class UIKRetargeter;
-struct FIKRetargetBatchOperationContext;
 
 //** Encapsulate ability to batch duplicate and retarget a set of animation assets */
 struct FIKRetargetBatchOperation_Copy

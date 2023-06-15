@@ -60,8 +60,7 @@ public class RetargetSkeleton : ModuleRules
 				"AnimGraph",
 				"Persona",
 				"IKRig",
-                "IKRigEditor",
-                "PropertyEditor",
+				"PropertyEditor",
 				"EditorScriptingUtilities"
 			}
 			);

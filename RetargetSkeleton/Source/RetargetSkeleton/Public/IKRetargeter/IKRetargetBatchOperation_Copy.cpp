@@ -25,8 +25,6 @@
 #include "SSkeletonRetarget_IK.h"
 #include "EditorAssetLibrary.h"
 
-#include "IKRigEditor/Public/RetargetEditor/IKRetargetBatchOperation.h"
-
 #define LOCTEXT_NAMESPACE "RetargetBatchOperation"
 
 namespace NS_IKRetargetTool

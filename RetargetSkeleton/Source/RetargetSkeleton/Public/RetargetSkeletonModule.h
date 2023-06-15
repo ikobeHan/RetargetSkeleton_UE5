@@ -25,6 +25,12 @@ private:
 
 	void CreateRetargetSubMenu(FToolMenuSection& InSection);
 
+	/** Handler for when Create Rig is selected */
+	void ExecuteCreateRig(TArray<TWeakObjectPtr<class USkeleton>> Skeletons);
+
+	/** Handler for when Skeleton Retarget is selected */
+	void ExecuteRetargetSkeleton(TArray<TWeakObjectPtr<class USkeleton>> Skeletons);
+
 	/** Handler for when Skeleton Retarget is selected */
 	void ExecuteRetargetSkeleton_Retargeter(TArray<TWeakObjectPtr<class USkeleton>> Skeletons);
 

@@ -7,10 +7,10 @@
 #include "Settings/SkeletalMeshEditorSettings.h"
 #include "PreviewScene.h"
 #include "PropertyCustomizationHelpers.h"
-#include "IKRigEditor/Public/RetargetEditor/IKRetargetBatchOperation.h"
+
 
 class UIKRetargeter;
-
+struct FIKRetargetBatchOperationContext;
 
 //** Viewport in retarget dialog that shows source / target retarget pose */
 class SIKRetargetSkel_PoseViewport : public SEditorViewport
@@ -171,7 +171,7 @@ private:
 
 private:
 	/** Necessary data collected from UI to run retarget. */
-	FIKRetargetBatchOperationContext BatchContext;
+	TSharedPtr<struct FIKRetargetBatchOperationContext> BatchContext;
 
 	/** Pool for maintaining and rendering thumbnails */
 	TSharedPtr<FAssetThumbnailPool> AssetThumbnailPool;

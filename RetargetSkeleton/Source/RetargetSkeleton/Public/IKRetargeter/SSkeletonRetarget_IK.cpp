@@ -18,6 +18,7 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "IKRigEditor/Public/RetargetEditor/IKRetargetBatchOperation.h"
 #include "IKRetargetBatchOperation_Copy.h"
 
 #define LOCTEXT_NAMESPACE "SIKRetargetSkel_PoseViewport"
@@ -109,6 +110,7 @@ TSharedPtr<SWindow> SSIKRetargetSkel_AnimAssetsWindow::DialogWindow;
 void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 {
 	AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(1024));
+	BatchContext = MakeShareable(new FIKRetargetBatchOperationContext());
 
 	this->ChildSlot
 	[
@@ -134,7 +136,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("Retarget_SourceTitle", "Source Skeletal Mesh"))
-				.Font(FEditorStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
+				.Font(FAppStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
 				.AutoWrapText(true)
 			]
 			+ SVerticalBox::Slot()
@@ -142,7 +144,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 			.Padding(5, 5)
 			[
 				SAssignNew(SourceViewport, SIKRetargetSkel_PoseViewport)
-				.SkeletalMesh(BatchContext.SourceMesh)
+				.SkeletalMesh(BatchContext->SourceMesh)
 			]
 			+ SVerticalBox::Slot()
 			.AutoHeight()
@@ -157,18 +159,18 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 				.ThumbnailPool(AssetThumbnailPool)
 				.IsEnabled_Lambda([this]()
 				{
-					if (!BatchContext.IKRetargetAsset)
+					if (!BatchContext->IKRetargetAsset)
 					{
 						return false;
 					}
 
-					return BatchContext.IKRetargetAsset->GetSourceIKRig() != nullptr;
+					return BatchContext->IKRetargetAsset->GetSourceIKRig() != nullptr;
 				})
 				.ObjectPath(this, &SSIKRetargetSkel_AnimAssetsWindow::GetCurrentSourceMeshPath)
 				.OnObjectChanged(this, &SSIKRetargetSkel_AnimAssetsWindow::SourceMeshAssigned)
 				.OnShouldFilterAsset_Lambda([this](const FAssetData& AssetData)
 					{
-						if (!BatchContext.IKRetargetAsset)
+						if (!BatchContext->IKRetargetAsset)
 						{
 							return true;
 						}
@@ -179,7 +181,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 							return true;
 						}
 
-						USkeletalMesh* PreviewMesh = BatchContext.IKRetargetAsset->GetSourceIKRig()->GetPreviewMesh();
+						USkeletalMesh* PreviewMesh = BatchContext->IKRetargetAsset->GetSourceIKRig()->GetPreviewMesh();
 						if (!PreviewMesh)
 						{
 							return true;
@@ -207,7 +209,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("Retarget_TargetTitle", "Target Skeletal Mesh"))
-				.Font(FEditorStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
+				.Font(FAppStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
 				.AutoWrapText(true)
 			]
 
@@ -232,12 +234,12 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 				.ThumbnailPool(AssetThumbnailPool)
 				.IsEnabled_Lambda([this]()
 					{
-						if (!BatchContext.IKRetargetAsset)
+						if (!BatchContext->IKRetargetAsset)
 						{
 							return false;
 						}
 
-						return BatchContext.IKRetargetAsset->GetTargetIKRig() != nullptr;
+						return BatchContext->IKRetargetAsset->GetTargetIKRig() != nullptr;
 					})
 				.ObjectPath(this, &SSIKRetargetSkel_AnimAssetsWindow::GetCurrentTargetMeshPath)
 					.OnObjectChanged(this, &SSIKRetargetSkel_AnimAssetsWindow::TargetMeshAssigned)
@@ -270,7 +272,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 			[
 				SNew(STextBlock)
 				.Text(LOCTEXT("Retarget_RetargetAsset", "IK Retargeter"))
-				.Font(FEditorStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
+				.Font(FAppStyle::GetFontStyle("Persona.RetargetManager.BoldFont"))
 				.AutoWrapText(true)
 			]
 
@@ -315,14 +317,14 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 			.Padding(2)
 			[
 				SNew(SUniformGridPanel)
-				.SlotPadding(FEditorStyle::GetMargin("StandardDialog.SlotPadding"))
-				.MinDesiredSlotWidth(FEditorStyle::GetFloat("StandardDialog.MinDesiredSlotWidth"))
-				.MinDesiredSlotHeight(FEditorStyle::GetFloat("StandardDialog.MinDesiredSlotHeight"))
+				.SlotPadding(FAppStyle::GetMargin("StandardDialog.SlotPadding"))
+				.MinDesiredSlotWidth(FAppStyle::GetFloat("StandardDialog.MinDesiredSlotWidth"))
+				.MinDesiredSlotHeight(FAppStyle::GetFloat("StandardDialog.MinDesiredSlotHeight"))
 				+ SUniformGridPanel::Slot(0, 0)
 				[
 					SNew(SButton).HAlign(HAlign_Center)
 					.Text(LOCTEXT("RetargetOptions_Cancel", "Cancel"))
-					.ContentPadding(FEditorStyle::GetMargin("StandardDialog.ContentPadding"))
+					.ContentPadding(FAppStyle::GetMargin("StandardDialog.ContentPadding"))
 					.OnClicked(this, &SSIKRetargetSkel_AnimAssetsWindow::OnCancel)
 				]
 				+ SUniformGridPanel::Slot(1, 0)
@@ -332,7 +334,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 					.IsEnabled(this, &SSIKRetargetSkel_AnimAssetsWindow::CanApply)
 					.OnClicked(this, &SSIKRetargetSkel_AnimAssetsWindow::OnApply)
 					.HAlign(HAlign_Center)
-					.ContentPadding(FEditorStyle::GetMargin("StandardDialog.ContentPadding"))
+					.ContentPadding(FAppStyle::GetMargin("StandardDialog.ContentPadding"))
 				]
 
 			]
@@ -342,7 +344,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 
 bool SSIKRetargetSkel_AnimAssetsWindow::CanApply() const
 {
-	return BatchContext.IsValid();
+	return BatchContext->IsValid();
 }
 
 FReply SSIKRetargetSkel_AnimAssetsWindow::OnApply()
@@ -350,7 +352,7 @@ FReply SSIKRetargetSkel_AnimAssetsWindow::OnApply()
 	UpdateTempFolder();
 	CloseWindow();
 	FIKRetargetBatchOperation_Copy BatchOperation;
-	BatchOperation.RunRetarget(BatchContext);
+	BatchOperation.RunRetarget(*BatchContext);
 	return FReply::Handled();
 }
 
@@ -376,7 +378,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::ShowWindow(USkeleton* InOldSkeleton)
 	}
 
 	DialogWindow = SNew(SWindow)
-		.Title(LOCTEXT("IKRetargetSkeletonTitleW", "Retarget Skeletion to Another ( IKRetargeter )"))
+		.Title(LOCTEXT("IKRetargetSkeletonTitleW", "Retarget Skeletion to Another Skel"))
 		.SupportsMinimize(false)
 		.SupportsMaximize(false)
 		.HasCloseButton(true)
@@ -386,13 +388,13 @@ void SSIKRetargetSkel_AnimAssetsWindow::ShowWindow(USkeleton* InOldSkeleton)
 	TSharedPtr<class SSIKRetargetSkel_AnimAssetsWindow> DialogWidget;
 	TSharedPtr<SBorder> DialogWrapper =
 		SNew(SBorder)
-		.BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
+		.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
 		.Padding(4.0f)
 		[
 			SAssignNew(DialogWidget, SSIKRetargetSkel_AnimAssetsWindow)
 		];
 
-	DialogWidget->BatchContext.AssetsToRetarget = FilterRelativeAnimAssets(InOldSkeleton);;
+	DialogWidget->BatchContext->AssetsToRetarget = FilterRelativeAnimAssets(InOldSkeleton);;
 	DialogWindow->SetOnWindowClosed(FRequestDestroyWindowOverride::CreateSP(DialogWidget.Get(), &SSIKRetargetSkel_AnimAssetsWindow::OnDialogClosed));
 	DialogWindow->SetContent(DialogWrapper.ToSharedRef());
 
@@ -407,36 +409,36 @@ void SSIKRetargetSkel_AnimAssetsWindow::OnDialogClosed(const TSharedRef<SWindow>
 void SSIKRetargetSkel_AnimAssetsWindow::SourceMeshAssigned(const FAssetData& InAssetData)
 {
 	USkeletalMesh* Mesh = Cast<USkeletalMesh>(InAssetData.GetAsset());
-	BatchContext.SourceMesh = Mesh;
-	SourceViewport->SetSkeletalMesh(BatchContext.SourceMesh);
+	BatchContext->SourceMesh = Mesh;
+	SourceViewport->SetSkeletalMesh(BatchContext->SourceMesh);
 }
 
 void SSIKRetargetSkel_AnimAssetsWindow::TargetMeshAssigned(const FAssetData& InAssetData)
 {
 	USkeletalMesh* Mesh = Cast<USkeletalMesh>(InAssetData.GetAsset());
-	BatchContext.TargetMesh = Mesh;
-	TargetViewport->SetSkeletalMesh(BatchContext.TargetMesh);
+	BatchContext->TargetMesh = Mesh;
+	TargetViewport->SetSkeletalMesh(BatchContext->TargetMesh);
 }
 
 FString SSIKRetargetSkel_AnimAssetsWindow::GetCurrentSourceMeshPath() const
 {
-	return BatchContext.SourceMesh ? BatchContext.SourceMesh->GetPathName() : FString("");
+	return BatchContext->SourceMesh ? BatchContext->SourceMesh->GetPathName() : FString("");
 }
 
 FString SSIKRetargetSkel_AnimAssetsWindow::GetCurrentTargetMeshPath() const
 {
-	return BatchContext.TargetMesh ? BatchContext.TargetMesh->GetPathName() : FString("");
+	return BatchContext->TargetMesh ? BatchContext->TargetMesh->GetPathName() : FString("");
 }
 
 FString SSIKRetargetSkel_AnimAssetsWindow::GetCurrentRetargeterPath() const
 {
-	return BatchContext.IKRetargetAsset ? BatchContext.IKRetargetAsset->GetPathName() : FString("");
+	return BatchContext->IKRetargetAsset ? BatchContext->IKRetargetAsset->GetPathName() : FString("");
 }
 
 void SSIKRetargetSkel_AnimAssetsWindow::RetargeterAssigned(const FAssetData& InAssetData)
 {
 	UIKRetargeter* InRetargeter = Cast<UIKRetargeter>(InAssetData.GetAsset());
-	BatchContext.IKRetargetAsset = InRetargeter;
+	BatchContext->IKRetargetAsset = InRetargeter;
 	const UIKRigDefinition* SourceIKRig = InRetargeter ? InRetargeter->GetSourceIKRig() : nullptr;
 	const UIKRigDefinition* TargetIKRig = InRetargeter ? InRetargeter->GetTargetIKRig() : nullptr;
 	USkeletalMesh* SourceMesh = SourceIKRig ? SourceIKRig->GetPreviewMesh() : nullptr;
@@ -447,24 +449,28 @@ void SSIKRetargetSkel_AnimAssetsWindow::RetargeterAssigned(const FAssetData& InA
 
 ECheckBoxState SSIKRetargetSkel_AnimAssetsWindow::IsRemappingReferencedAssets() const
 {
-	return BatchContext.bRemapReferencedAssets ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	return BatchContext->bRemapReferencedAssets ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
 
 void SSIKRetargetSkel_AnimAssetsWindow::OnRemappingReferencedAssetsChanged(ECheckBoxState InNewRadioState)
 {
-	BatchContext.bRemapReferencedAssets = (InNewRadioState == ECheckBoxState::Checked);
+	BatchContext->bRemapReferencedAssets = (InNewRadioState == ECheckBoxState::Checked);
 }
 
 
 void SSIKRetargetSkel_AnimAssetsWindow::UpdateTempFolder()
 {
 	//TODO:get current path + /TempRetargetFolder/
-	BatchContext.NameRule.FolderPath = "/Game/TempRetargetFolder";
+	BatchContext->NameRule.FolderPath = "/Game/TempRetargetFolder";
 }
 
 
 TArray<TWeakObjectPtr<UObject>> SSIKRetargetSkel_AnimAssetsWindow::FilterRelativeAnimAssets(USkeleton* InSkel)
 {
+
+	FScopedSlowTask SlowTask(1, LOCTEXT("SSIKRetargetSkel_AnimAssetsWindow", "Retargetor: Filter Relative AnimAssets..."));
+	SlowTask.MakeDialog();
+
 	TArray<FName> Packages;
 	TArray<TWeakObjectPtr<UObject>> RemapData;
 
@@ -503,6 +509,9 @@ TArray<TWeakObjectPtr<UObject>> SSIKRetargetSkel_AnimAssetsWindow::FilterRelativ
 			}
 		}
 	}
+
+	SlowTask.EnterProgressFrame(1);
+
 	return RemapData;
 }
 

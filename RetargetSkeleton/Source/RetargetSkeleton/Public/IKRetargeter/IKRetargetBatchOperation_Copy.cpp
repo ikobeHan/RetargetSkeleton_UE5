@@ -25,6 +25,8 @@
 #include "SSkeletonRetarget_IK.h"
 #include "EditorAssetLibrary.h"
 
+#include "IKRigEditor/Public/RetargetEditor/IKRetargetBatchOperation.h"
+
 #define LOCTEXT_NAMESPACE "RetargetBatchOperation"
 
 namespace NS_IKRetargetTool
@@ -36,7 +38,7 @@ namespace NS_IKRetargetTool
 		FString StandardFilename;
 		FName StandardFileFName = NAME_None;
 		//Content folder
-		if (FPackageName::DoesPackageExist(Package->FileName.ToString(), &Filename, false))
+		if (FPackageName::DoesPackageExist(Package->GetLoadedPath().GetPackageFName().ToString(), &Filename, false))
 		{
 			StandardFilename = PackageFilename = FPaths::ConvertRelativePathToFull(Filename);
 
@@ -341,6 +343,22 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 		FAnimPoseEvaluationOptions EvaluationOptions = FAnimPoseEvaluationOptions();
 		EvaluationOptions.OptionalSkeletalMesh = SourceSkeleton.SkeletalMesh;
 
+		TArray<FName> SpeedCurveNames;
+		Context.IKRetargetAsset->GetSpeedCurveNames(SpeedCurveNames);
+
+		const FSmartNameMapping* SourceContainer = SourceSkeleton.SkeletalMesh->GetSkeleton()->GetSmartNameContainer(USkeleton::AnimCurveMappingName);
+		TArray<FName> SourceCurveNames;
+		SourceContainer->FillNameArray(SourceCurveNames);
+
+		TMap<FName, SmartName::UID_Type> SourceSpeedCurveIDs;
+		for (int32 CurveIndex = 0; CurveIndex < SourceCurveNames.Num(); ++CurveIndex)
+		{
+			if (SpeedCurveNames.Contains(SourceCurveNames[CurveIndex]))
+			{
+				SourceSpeedCurveIDs.Add(SourceCurveNames[CurveIndex], SourceContainer->FindUID(SourceCurveNames[CurveIndex]));
+			}
+		}
+
 		// retarget each frame's pose from source to target
 		for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 		{
@@ -357,10 +375,25 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 			}
 
 			// update goals 
-			Processor->CopyAllSettingsFromAsset();
+			//Processor->CopyAllSettingsFromAsset();
 
 			// run the retarget
-			const TArray<FTransform>& TargetComponentPose = Processor->RunRetargeter(SourceComponentPose);
+			const float TimeAtCurrentFrame = SourceSequence->GetTimeAtFrame(FrameIndex);
+			float DeltaTime = TimeAtCurrentFrame;
+			if (FrameIndex > 0)
+			{
+				const float TimeAtPrevFrame = SourceSequence->GetTimeAtFrame(FrameIndex - 1);
+				DeltaTime = TimeAtCurrentFrame - TimeAtPrevFrame;
+			}
+
+			TMap<FName, float> SpeedCurveValues;
+			for (TPair<FName, SmartName::UID_Type> CurveNameAndID : SourceSpeedCurveIDs)
+			{
+				SpeedCurveValues.Add(CurveNameAndID.Key, SourceSequence->EvaluateCurveData(CurveNameAndID.Value, TimeAtCurrentFrame));
+			}
+
+
+			const TArray<FTransform>& TargetComponentPose = Processor->RunRetargeter(SourceComponentPose, SpeedCurveValues, DeltaTime);
 
 			// convert to a local-space pose
 			TArray<FTransform> TargetLocalPose = TargetComponentPose;

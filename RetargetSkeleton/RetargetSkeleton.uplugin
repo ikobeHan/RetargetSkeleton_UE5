@@ -16,10 +16,6 @@
 	"Installed": false,
 	"Plugins": [
 		{
-			"Name": "IKRig",
-			"Enabled": true
-		},
-		{
 			"Name": "EditorScriptingUtilities",
 			"Enabled": true
 		}

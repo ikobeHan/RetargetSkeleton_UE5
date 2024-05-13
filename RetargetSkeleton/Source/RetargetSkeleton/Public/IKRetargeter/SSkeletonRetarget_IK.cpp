@@ -109,6 +109,7 @@ TSharedPtr<SWindow> SSIKRetargetSkel_AnimAssetsWindow::DialogWindow;
 void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 {
 	AssetThumbnailPool = MakeShareable(new FAssetThumbnailPool(1024));
+	BatchContext.bIncludeReferencedAssets = true;
 
 	this->ChildSlot
 	[
@@ -162,7 +163,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 						return false;
 					}
 
-					return BatchContext.IKRetargetAsset->GetSourceIKRig() != nullptr;
+					return BatchContext.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Source) != nullptr;
 				})
 				.ObjectPath(this, &SSIKRetargetSkel_AnimAssetsWindow::GetCurrentSourceMeshPath)
 				.OnObjectChanged(this, &SSIKRetargetSkel_AnimAssetsWindow::SourceMeshAssigned)
@@ -178,8 +179,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 						{
 							return true;
 						}
-
-						USkeletalMesh* PreviewMesh = BatchContext.IKRetargetAsset->GetSourceIKRig()->GetPreviewMesh();
+						USkeletalMesh* PreviewMesh = BatchContext.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Source)->GetPreviewMesh();
 						if (!PreviewMesh)
 						{
 							return true;
@@ -236,14 +236,29 @@ void SSIKRetargetSkel_AnimAssetsWindow::Construct(const FArguments& InArgs)
 						{
 							return false;
 						}
-
-						return BatchContext.IKRetargetAsset->GetTargetIKRig() != nullptr;
+						return BatchContext.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Target) != nullptr;
 					})
-				.ObjectPath(this, &SSIKRetargetSkel_AnimAssetsWindow::GetCurrentTargetMeshPath)
+					.ObjectPath(this, &SSIKRetargetSkel_AnimAssetsWindow::GetCurrentTargetMeshPath)
 					.OnObjectChanged(this, &SSIKRetargetSkel_AnimAssetsWindow::TargetMeshAssigned)
 					.OnShouldFilterAsset_Lambda([this](const FAssetData& AssetData)
 					{
-						return false;
+						if (!BatchContext.IKRetargetAsset)
+						{
+							return true;
+						}
+
+						USkeletalMesh* Mesh = Cast<USkeletalMesh>(AssetData.GetAsset());
+						if (!Mesh)
+						{
+							return true;
+						}
+						USkeletalMesh* PreviewMesh = BatchContext.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Target)->GetPreviewMesh();
+						if (!PreviewMesh)
+						{
+							return true;
+						}
+
+						return Mesh->GetSkeleton() != PreviewMesh->GetSkeleton();
 					})
 				]
 			]
@@ -376,7 +391,7 @@ void SSIKRetargetSkel_AnimAssetsWindow::ShowWindow(USkeleton* InOldSkeleton)
 	}
 
 	DialogWindow = SNew(SWindow)
-		.Title(LOCTEXT("IKRetargetSkeletonTitleW", "Retarget Skeletion to Another ( IKRetargeter )"))
+		.Title(LOCTEXT("IKRetargetSkeletonTitleW", "Retarget Skeletion to Another ( with all reference anim assets )"))
 		.SupportsMinimize(false)
 		.SupportsMaximize(false)
 		.HasCloseButton(true)
@@ -437,8 +452,8 @@ void SSIKRetargetSkel_AnimAssetsWindow::RetargeterAssigned(const FAssetData& InA
 {
 	UIKRetargeter* InRetargeter = Cast<UIKRetargeter>(InAssetData.GetAsset());
 	BatchContext.IKRetargetAsset = InRetargeter;
-	const UIKRigDefinition* SourceIKRig = InRetargeter ? InRetargeter->GetSourceIKRig() : nullptr;
-	const UIKRigDefinition* TargetIKRig = InRetargeter ? InRetargeter->GetTargetIKRig() : nullptr;
+	const UIKRigDefinition* SourceIKRig = InRetargeter ? InRetargeter->GetIKRig(ERetargetSourceOrTarget::Source) : nullptr;
+	const UIKRigDefinition* TargetIKRig = InRetargeter ? InRetargeter->GetIKRig(ERetargetSourceOrTarget::Target) : nullptr;
 	USkeletalMesh* SourceMesh = SourceIKRig ? SourceIKRig->GetPreviewMesh() : nullptr;
 	USkeletalMesh* TargetMesh = TargetIKRig ? TargetIKRig->GetPreviewMesh() : nullptr;
 	SourceMeshAssigned(FAssetData(SourceMesh));
@@ -447,19 +462,20 @@ void SSIKRetargetSkel_AnimAssetsWindow::RetargeterAssigned(const FAssetData& InA
 
 ECheckBoxState SSIKRetargetSkel_AnimAssetsWindow::IsRemappingReferencedAssets() const
 {
-	return BatchContext.bRemapReferencedAssets ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	//return BatchContext.bIncludeReferencedAssets ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	return ECheckBoxState::Checked;
 }
 
 void SSIKRetargetSkel_AnimAssetsWindow::OnRemappingReferencedAssetsChanged(ECheckBoxState InNewRadioState)
 {
-	BatchContext.bRemapReferencedAssets = (InNewRadioState == ECheckBoxState::Checked);
+	BatchContext.bIncludeReferencedAssets = true; //(InNewRadioState == ECheckBoxState::Checked); //实际上不需要这个值，因为我们本来就会收集骨骼上的所有动画
 }
 
 
 void SSIKRetargetSkel_AnimAssetsWindow::UpdateTempFolder()
 {
 	//TODO:get current path + /TempRetargetFolder/
-	BatchContext.NameRule.FolderPath = "/Game/TempRetargetFolder";
+	BatchContext.NameRule.FolderPath = "/Game/_TempRetargetFolder_";
 }
 
 

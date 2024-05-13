@@ -149,7 +149,7 @@ private:
 	/** Handler for dialog window close button */
 	void OnDialogClosed(const TSharedRef<SWindow>& Window);
 
-	/** Modifying Source Mesh */
+	/** Modifying Source Mesh,just for preview */
 	void SourceMeshAssigned(const FAssetData& InAssetData);
 	FString GetCurrentSourceMeshPath() const;
 

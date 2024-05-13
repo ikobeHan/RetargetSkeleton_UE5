@@ -20,7 +20,9 @@ public:
 	/* Actually run the process to duplicate and retarget the assets for the given context */
 	void RunRetarget(FIKRetargetBatchOperationContext& Context);
 
+
 private:
+	void Reset();
 
 	/**
 	* Initialize set of referenced assets to retarget.
@@ -36,6 +38,12 @@ private:
 
 	/* Convert animation on all the duplicates */
 	void ConvertAnimation(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
+
+	// Copy/remap curves on all the duplicates
+	void RemapCurves(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
+
+	// Replace existing assets (optional)
+	void OverwriteExistingAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
 
 	/* Output notifications of results */
 	void NotifyUserOfResults(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress) const;

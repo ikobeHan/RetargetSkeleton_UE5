@@ -24,6 +24,12 @@
 
 #include "SSkeletonRetarget_IK.h"
 #include "EditorAssetLibrary.h"
+#include "Retargeter/IKRetargetOps.h"
+#include "Retargeter/RetargetOps/CurveRemapOp.h"
+#include "Animation/AnimData/CurveIdentifier.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetToolsModule.h"
+#include "ObjectTools.h"
 
 #define LOCTEXT_NAMESPACE "RetargetBatchOperation"
 
@@ -48,6 +54,9 @@ namespace NS_IKRetargetTool
 	}
 }
 
+
+
+
 int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchOperationContext& Context)
 {
 	// re-generate lists of selected and referenced assets
@@ -70,9 +79,9 @@ int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchO
 				{
 					for (const FAnimSegment& Segment : Track.AnimTrack.AnimSegments)
 					{
-						if (Segment.IsValid() && Segment.AnimReference)
+						if (Segment.IsValid() && Segment.GetAnimReference())
 						{
-							AnimationAssetsToRetarget.AddUnique(Segment.AnimReference);
+							AnimationAssetsToRetarget.AddUnique(Segment.GetAnimReference());
 						}
 					}
 				}
@@ -98,24 +107,26 @@ int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchO
 		}
 	}
 
-	if (Context.bRemapReferencedAssets)
-	{
-		// Grab assets from the blueprint.
-		// Do this first as it can add complex assets to the retarget array which will need to be processed next.
-		for (UAnimBlueprint* AnimBlueprint : AnimBlueprintsToRetarget)
-		{
-			GetAllAnimationSequencesReferredInBlueprint(AnimBlueprint, AnimationAssetsToRetarget);
-		}
+	//Dont need,we gathered all anim assets before.
 
-		int32 AssetIndex = 0;
-		while (AssetIndex < AnimationAssetsToRetarget.Num())
-		{
-			UAnimationAsset* AnimAsset = AnimationAssetsToRetarget[AssetIndex++];
-			AnimAsset->HandleAnimReferenceCollection(AnimationAssetsToRetarget, true);
-		}
-	}
+	//if (Context.bIncludeReferencedAssets)
+	//{
+	//	// Grab assets from the blueprint.
+	//	// Do this first as it can add complex assets to the retarget array which will need to be processed next.
+	//	for (UAnimBlueprint* AnimBlueprint : AnimBlueprintsToRetarget)
+	//	{
+	//		GetAllAnimationSequencesReferredInBlueprint(AnimBlueprint, AnimationAssetsToRetarget);
+	//	}
 
-	return AnimationAssetsToRetarget.Num();
+	//	int32 AssetIndex = 0;
+	//	while (AssetIndex < AnimationAssetsToRetarget.Num())
+	//	{
+	//		UAnimationAsset* AnimAsset = AnimationAssetsToRetarget[AssetIndex++];
+	//		AnimAsset->HandleAnimReferenceCollection(AnimationAssetsToRetarget, true);
+	//	}
+	//}
+
+	return AnimationAssetsToRetarget.Num() + AnimBlueprintsToRetarget.Num();
 }
 
 void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
@@ -178,7 +189,7 @@ void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
 	// Remapped assets needs the duplicated ones added
 	RemappedAnimAssets.Append(DuplicatedAnimAssets);
 
-	//交换K,V。原来是 {old,new} 交换变成{new,old},这样就可以对旧的资源进行重定向
+	////交换K,V。原来是 {old,new} 交换变成{new,old},这样就可以对旧的资源进行重定向
 	ExchangeMapKeyValue(DuplicatedAnimAssets);
 	ExchangeMapKeyValue(DuplicatedBlueprints);
 
@@ -205,12 +216,21 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 			IAnimationDataController& Controller = AnimSequenceToRetarget->GetController();
 			const bool ShouldTransactAnimEdits = false;
 			Controller.OpenBracket(FText::FromString("Generating Retargeted Animation Data"), ShouldTransactAnimEdits);
-			Controller.RemoveAllCurvesOfType(ERawCurveTrackTypes::RCT_Transform);
+			Controller.RemoveAllCurvesOfType(ERawCurveTrackTypes::RCT_Transform, ShouldTransactAnimEdits);
+
 			// clear bone tracks to prevent recompression
-			Controller.RemoveAllBoneTracks(false);
+			Controller.RemoveAllBoneTracks(ShouldTransactAnimEdits);
+
+			// reset all additive animation properties to ensure WYSIWYG playback of additive anims between retargeter and sequence
+			AnimSequenceToRetarget->AdditiveAnimType = EAdditiveAnimationType::AAT_None;
+			AnimSequenceToRetarget->RefPoseType = EAdditiveBasePoseType::ABPT_None;
+			AnimSequenceToRetarget->RefFrameIndex = 0;
+			AnimSequenceToRetarget->RefPoseSeq = nullptr;
+
 			// set the retarget source to the target skeletal mesh
 			AnimSequenceToRetarget->RetargetSource = NAME_None;
 			AnimSequenceToRetarget->RetargetSourceAsset = Context.TargetMesh;
+
 			// done editing sequence data, close bracket
 			Controller.CloseBracket(ShouldTransactAnimEdits);
 		}
@@ -247,7 +267,8 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 	{
 		// replace skeleton
 		AnimBlueprint->TargetSkeleton = NewSkeleton;
-
+		// replace preview mesh (uses skeleton default otherwise)
+		AnimBlueprint->SetPreviewMesh(Context.TargetMesh);
 
 		/*Hanmginglu:我们是对旧资源重定向，他们的引用就不用变更了。
 		// if they have parent blueprint, make sure to re-link to the new one also
@@ -273,6 +294,9 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 		AnimBlueprint->PostEditChange();
 		AnimBlueprint->MarkPackageDirty();
 	}
+
+	// copy/remap curves to duplicate sequences
+	RemapCurves(Context, Progress);
 }
 
 void FIKRetargetBatchOperation_Copy::ConvertAnimation(
@@ -290,7 +314,7 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 	}
 
 	// target skeleton data
-	const FTargetSkeleton& TargetSkeleton = Processor->GetTargetSkeleton();
+	const FRetargetSkeleton& TargetSkeleton = Processor->GetSkeleton(ERetargetSourceOrTarget::Target);
 	const TArray<FName>& TargetBoneNames = TargetSkeleton.BoneNames;
 	const int32 NumTargetBones = TargetBoneNames.Num();
 
@@ -299,12 +323,16 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 	BoneTracks.SetNumZeroed(NumTargetBones);
 
 	// source skeleton data
-	const FRetargetSkeleton& SourceSkeleton = Processor->GetSourceSkeleton();
+	const FRetargetSkeleton& SourceSkeleton = Processor->GetSkeleton(ERetargetSourceOrTarget::Source);
 	const TArray<FName>& SourceBoneNames = SourceSkeleton.BoneNames;
 	const int32 NumSourceBones = SourceBoneNames.Num();
 
 	TArray<FTransform> SourceComponentPose;
 	SourceComponentPose.SetNum(NumSourceBones);
+
+	// get names of the curves the retargeter is looking for
+	TArray<FName> SpeedCurveNames;
+	Context.IKRetargetAsset->GetSpeedCurveNames(SpeedCurveNames);
 
 	// for each pair of source / target animation sequences
 	for (TPair<UAnimationAsset*, UAnimationAsset*>& Pair : DuplicatedAnimAssets)
@@ -318,7 +346,7 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 
 		// increment progress bar
 		FString AssetName = DestinationSequence->GetName();
-		Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("RunningBatchRetarget", "Retargeting animation asset: {Asset}"), FText::FromString(AssetName)));
+		Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("RunningBatchRetarget", "Retargeting animation asset: {0}"), FText::FromString(AssetName)));
 
 		// remove all keys from the destination animation sequence
 		IAnimationDataController& TargetSeqController = DestinationSequence->GetController();
@@ -341,22 +369,13 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 		FAnimPoseEvaluationOptions EvaluationOptions = FAnimPoseEvaluationOptions();
 		EvaluationOptions.OptionalSkeletalMesh = SourceSkeleton.SkeletalMesh;
 
-		TArray<FName> SpeedCurveNames;
-		Context.IKRetargetAsset->GetSpeedCurveNames(SpeedCurveNames);
-
-		const FSmartNameMapping* SourceContainer = SourceSkeleton.SkeletalMesh->GetSkeleton()->GetSmartNameContainer(USkeleton::AnimCurveMappingName);
-		TArray<FName> SourceCurveNames;
-		SourceContainer->FillNameArray(SourceCurveNames);
-
-		TMap<FName, SmartName::UID_Type> SourceSpeedCurveIDs;
-		for (int32 CurveIndex = 0; CurveIndex < SourceCurveNames.Num(); ++CurveIndex)
-		{
-			if (SpeedCurveNames.Contains(SourceCurveNames[CurveIndex]))
-			{
-				SourceSpeedCurveIDs.Add(SourceCurveNames[CurveIndex], SourceContainer->FindUID(SourceCurveNames[CurveIndex]));
-			}
-		}
-
+		//new in 5.4
+		// ensure WYSIWYG with editor by ensuring the same root motion is applied to the pose, not to the component ，
+		EvaluationOptions.bExtractRootMotion = false;
+		EvaluationOptions.bIncorporateRootMotionIntoPose = true;
+		// reset the planting state
+		Processor->ResetPlanting();
+		
 		// retarget each frame's pose from source to target
 		for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 		{
@@ -373,7 +392,7 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 			}
 
 			// update goals 
-			//Processor->CopyAllSettingsFromAsset();
+			Processor->ApplySettingsFromAsset();
 
 			// run the retarget
 			const float TimeAtCurrentFrame = SourceSequence->GetTimeAtFrame(FrameIndex);
@@ -384,13 +403,14 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 				DeltaTime = TimeAtCurrentFrame - TimeAtPrevFrame;
 			}
 
+			// get the curve values from the source sequence (for speed-based IK planting)
 			TMap<FName, float> SpeedCurveValues;
-			for (TPair<FName, SmartName::UID_Type> CurveNameAndID : SourceSpeedCurveIDs)
+			for (const FName& SpeedCurveName : SpeedCurveNames)
 			{
-				SpeedCurveValues.Add(CurveNameAndID.Key, SourceSequence->EvaluateCurveData(CurveNameAndID.Value, TimeAtCurrentFrame));
+				SpeedCurveValues.Add(SpeedCurveName, SourceSequence->EvaluateCurveData(SpeedCurveName, TimeAtCurrentFrame));
 			}
 
-
+			// run the retargeter
 			const TArray<FTransform>& TargetComponentPose = Processor->RunRetargeter(SourceComponentPose, SpeedCurveValues, DeltaTime);
 
 			// convert to a local-space pose
@@ -417,12 +437,182 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 			const FName& TargetBoneName = TargetBoneNames[TargetBoneIndex];
 
 			const FRawAnimSequenceTrack& RawTrack = BoneTracks[TargetBoneIndex];
-			TargetSeqController.AddBoneTrack(TargetBoneName, bShouldTransact);
+			TargetSeqController.AddBoneCurve(TargetBoneName, bShouldTransact);
 			TargetSeqController.SetBoneTrackKeys(TargetBoneName, RawTrack.PosKeys, RawTrack.RotKeys, RawTrack.ScaleKeys);
 		}
 
 		// done editing sequence data, close bracket
 		TargetSeqController.CloseBracket(ShouldTransactAnimEdits);
+	}
+}
+
+void FIKRetargetBatchOperation_Copy::RemapCurves(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
+{
+	USkeleton* SourceSkeleton = Context.SourceMesh->GetSkeleton();
+	USkeleton* TargetSkeleton = Context.TargetMesh->GetSkeleton();
+
+	// get map of curves to remap (Source:Target)
+	bool bCopyAllSourceCurves = true;
+	TMap<FAnimationCurveIdentifier, FAnimationCurveIdentifier> CurvesToRemap;
+	URetargetOpStack* OpStack = Context.IKRetargetAsset->GetPostSettingsUObject();
+	for (const TObjectPtr<URetargetOpBase>& RetargetOp : OpStack->RetargetOps)
+	{
+		UCurveRemapOp* CurveRemapOp = Cast<UCurveRemapOp>(RetargetOp);
+		if (!CurveRemapOp)
+		{
+			continue;
+		}
+
+		if (!CurveRemapOp->bIsEnabled)
+		{
+			continue;
+		}
+
+		for (const FCurveRemapPair& CurveToRemap : CurveRemapOp->CurvesToRemap)
+		{
+			const FAnimationCurveIdentifier SourceCurveId = UAnimationCurveIdentifierExtensions::FindCurveIdentifier(SourceSkeleton, CurveToRemap.SourceCurve, ERawCurveTrackTypes::RCT_Float);
+			const FAnimationCurveIdentifier TargetCurveId = UAnimationCurveIdentifierExtensions::FindCurveIdentifier(TargetSkeleton, CurveToRemap.TargetCurve, ERawCurveTrackTypes::RCT_Float);
+			CurvesToRemap.Add(SourceCurveId, TargetCurveId);
+		}
+
+		bCopyAllSourceCurves &= CurveRemapOp->bCopyAllSourceCurves;
+	}
+
+	// update progress bar
+	Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("RemappingCurves", "Remapping {0} curves on animation assets..."), FText::AsNumber(CurvesToRemap.Num())));
+
+	// for each exported animation, remap curves from source to target anim
+	for (TPair<UAnimationAsset*, UAnimationAsset*>& Pair : DuplicatedAnimAssets)
+	{
+		UAnimSequence* SourceSequence = Cast<UAnimSequence>(Pair.Key);
+		UAnimSequence* TargetSequence = Cast<UAnimSequence>(Pair.Value);
+		if (!(SourceSequence && TargetSequence))
+		{
+			continue;
+		}
+
+		// increment progress bar
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
+		// all curves were copied when we duplicated the animation sequence, so now we have to rename curves
+		// based on the remapping defined in the curve remap op(s)
+		IAnimationDataController& TargetSeqController = TargetSequence->GetController();
+		constexpr bool bShouldTransact = false;
+		TargetSeqController.OpenBracket(FText::FromString("Remapping Curve Data"), bShouldTransact);
+
+		const IAnimationDataModel* SourceDataModel = SourceSequence->GetDataModel();
+
+		for (const TTuple<FAnimationCurveIdentifier, FAnimationCurveIdentifier>& CurveToRemap : CurvesToRemap)
+		{
+			// get the source curve to copy from
+			const FFloatCurve* SourceCurve = SourceDataModel->FindFloatCurve(CurveToRemap.Key);
+			if (!SourceCurve)
+			{
+				continue; // missing source curve to remap
+			}
+
+			// add a curve to the target to house the keys
+			FAnimationCurveIdentifier TargetCurveID = CurveToRemap.Value;
+			if (!TargetCurveID.IsValid())
+			{
+				continue; // must provide a valid name for the target curve
+			}
+			TargetSeqController.AddCurve(TargetCurveID, SourceCurve->GetCurveTypeFlags(), bShouldTransact);
+
+			// copy data into target curve
+			TargetSeqController.SetCurveKeys(TargetCurveID, SourceCurve->FloatCurve.GetConstRefOfKeys(), bShouldTransact);
+			TargetSeqController.SetCurveColor(TargetCurveID, SourceCurve->GetColor(), bShouldTransact);
+		}
+
+		// optionally remove all source curves from the target asset
+		// (remove all curves that were copied when the source sequence was duplicated UNLESS they are remapped)
+		if (!bCopyAllSourceCurves)
+		{
+			// get list of target curves to keep
+			TArray<FAnimationCurveIdentifier> TargetCurvesToKeep;
+			CurvesToRemap.GenerateValueArray(TargetCurvesToKeep);
+
+			// get list of target curves to remove
+			const TArray<FFloatCurve>& AllTargetCurves = TargetSeqController.GetModel()->GetFloatCurves();
+			TArray<FAnimationCurveIdentifier> CurvesToRemove;
+			for (const FFloatCurve& TargetCurve : AllTargetCurves)
+			{
+				const FAnimationCurveIdentifier TargetCurveId = UAnimationCurveIdentifierExtensions::FindCurveIdentifier(TargetSkeleton, TargetCurve.GetName(), ERawCurveTrackTypes::RCT_Float);
+				if (TargetCurvesToKeep.Contains(TargetCurveId))
+				{
+					continue;
+				}
+				CurvesToRemove.Add(TargetCurveId);
+			}
+
+			// remove the curves
+			for (const FAnimationCurveIdentifier& CurveToRemove : CurvesToRemove)
+			{
+				TargetSeqController.RemoveCurve(CurveToRemove, bShouldTransact);
+			}
+		}
+
+		TargetSeqController.CloseBracket(bShouldTransact);
+	}
+}
+
+void FIKRetargetBatchOperation_Copy::OverwriteExistingAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
+{
+	if (!Context.bOverwriteExistingFiles)
+	{
+		return;
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::Get().LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
+
+	// for each retargeted asset, check if we need to replace an existing asset (one with the desired name, same location, same type)
+	for (TPair<UAnimationAsset*, UAnimationAsset*>& Pair : DuplicatedAnimAssets)
+	{
+		UAnimationAsset* OldAsset = Pair.Key;
+		UAnimationAsset* NewAsset = Pair.Value;
+
+		// get desired name
+		FString DesiredObjectName = Context.NameRule.Rename(OldAsset);
+		if (NewAsset->GetName() == DesiredObjectName)
+		{
+			// asset was not renamed due to collision with existing asset, so there's nothing to replace
+			continue;
+		}
+
+		// destination path
+		FString PathName = FPackageName::GetLongPackagePath(NewAsset->GetPathName());
+		FString DesiredPackageName = PathName + "/" + DesiredObjectName;
+		FString DesiredObjectPath = DesiredPackageName + "." + DesiredObjectName;
+		FAssetData AssetDataToReplace = AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(DesiredObjectPath));
+		const bool bHasDuplicateToReplace = AssetDataToReplace.IsValid() && AssetDataToReplace.GetAsset()->GetClass() == OldAsset->GetClass();
+		if (!bHasDuplicateToReplace)
+		{
+			// this could happen if the desired name was already in use by a different asset type
+			continue;
+		}
+
+		UObject* AssetToReplace = AssetDataToReplace.GetAsset();
+		if (AssetToReplace == OldAsset)
+		{
+			// we only replace previously retargeted animations, never the original
+			continue;
+		}
+
+		// reroute all references from old asset to new asset
+		TArray<UObject*> AssetsToReplace = { AssetToReplace };
+		ObjectTools::ForceReplaceReferences(NewAsset, AssetsToReplace);
+
+		// delete the old asset
+		ObjectTools::ForceDeleteObjects({ AssetToReplace }, false /*bShowConfirmation*/);
+
+		// rename the new asset with the desired name
+		FString CurrentAssetPath = NewAsset->GetPathName();
+		TArray<FAssetRenameData> AssetsToRename = { FAssetRenameData(CurrentAssetPath, DesiredObjectPath) };
+		AssetToolsModule.Get().RenameAssets(AssetsToRename);
 	}
 }
 
@@ -481,6 +671,8 @@ void FIKRetargetBatchOperation_Copy:: GetOldAssets(TArray<UObject*>& OldAssets) 
 
 void FIKRetargetBatchOperation_Copy::RunRetarget(FIKRetargetBatchOperationContext& Context)
 {
+	Reset();
+
 	const int32 NumAssets = GenerateAssetLists(Context);
 
 	// show progress bar
@@ -489,7 +681,17 @@ void FIKRetargetBatchOperation_Copy::RunRetarget(FIKRetargetBatchOperationContex
 
 	DuplicateRetargetAssets(Context, Progress);
 	RetargetAssets(Context, Progress);
+	//OverwriteExistingAssets(Context, Progress);
 	NotifyUserOfResults(Context, Progress);
+}
+
+void FIKRetargetBatchOperation_Copy::Reset()
+{
+	AnimationAssetsToRetarget.Reset();
+	AnimBlueprintsToRetarget.Reset();
+	DuplicatedAnimAssets.Reset();
+	DuplicatedBlueprints.Reset();
+	RemappedAnimAssets.Reset();
 }
 
 /**

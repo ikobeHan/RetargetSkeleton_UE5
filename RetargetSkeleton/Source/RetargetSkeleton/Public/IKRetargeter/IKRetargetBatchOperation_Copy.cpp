@@ -1,17 +1,17 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 #include "IKRetargetBatchOperation_Copy.h"
 
+#include "Engine/SkeletalMesh.h"
 #include "Animation/AnimSequence.h"
 #include "AnimationBlueprintLibrary.h"
 #include "AnimPose.h"
-#include "AnimPreviewInstance.h"
+#include "AssetToolsModule.h"
 #include "Animation/AnimSequence.h"
 #include "ContentBrowserModule.h"
 #include "EditorReimportHandler.h"
 #include "IContentBrowserSingleton.h"
-#include "ObjectEditorUtils.h"
-#include "SSkeletonWidget.h"
-#include "PropertyCustomizationHelpers.h"
-#include "Animation/DebugSkelMeshComponent.h"
+#include "SSkeletonRetarget_IK.h"
 #include "EditorFramework/AssetImportData.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -21,43 +21,16 @@
 #include "Retargeter/IKRetargetProcessor.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Animation/AnimMontage.h"
-
-#include "SSkeletonRetarget_IK.h"
-#include "EditorAssetLibrary.h"
 #include "Retargeter/IKRetargetOps.h"
 #include "Retargeter/RetargetOps/CurveRemapOp.h"
-#include "Animation/AnimData/CurveIdentifier.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetToolsModule.h"
 #include "ObjectTools.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "EditorAnimUtils.h"
+#include "EditorAssetLibrary.h"
 
-#define LOCTEXT_NAMESPACE "RetargetBatchOperation"
+#define LOCTEXT_NAMESPACE "RetargetBatchOperationCopy"
 
-namespace NS_IKRetargetTool
-{
-	static FString GetAssetsPathInPlatform(const FString& BaseDir, UPackage* Package)
-	{
-		FString Filename;
-		FString PackageFilename;
-		FString StandardFilename;
-		FName StandardFileFName = NAME_None;
-		//Content folder
-		if (FPackageName::DoesPackageExist(Package->GetLoadedPath().GetPackageFName().ToString(), &Filename, false))
-		{
-			StandardFilename = PackageFilename = FPaths::ConvertRelativePathToFull(Filename);
-
-			FPaths::MakeStandardFilename(StandardFilename);
-			StandardFileFName = FName(*StandardFilename);
-		}
-
-		return StandardFilename;
-	}
-}
-
-
-
-
-int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchOperationContext& Context)
+int32 UIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchOperationContext& Context)
 {
 	// re-generate lists of selected and referenced assets
 	AnimationAssetsToRetarget.Reset();
@@ -107,8 +80,6 @@ int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchO
 		}
 	}
 
-	//Dont need,we gathered all anim assets before.
-
 	//if (Context.bIncludeReferencedAssets)
 	//{
 	//	// Grab assets from the blueprint.
@@ -129,11 +100,11 @@ int32 FIKRetargetBatchOperation_Copy::GenerateAssetLists(const FIKRetargetBatchO
 	return AnimationAssetsToRetarget.Num() + AnimBlueprintsToRetarget.Num();
 }
 
-void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
+void UIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
 	const FIKRetargetBatchOperationContext& Context,
 	FScopedSlowTask& Progress)
 {
-	Progress.EnterProgressFrame(1.f, FText(LOCTEXT("BatchRetarget", "Skeleton Retarget animation assets...")));
+	Progress.EnterProgressFrame(1.f, FText(LOCTEXT("DuplicatingBatchRetarget", "Duplicating animation assets...")));
 
 	UPackage* DestinationPackage = Context.TargetMesh->GetOutermost();
 
@@ -146,8 +117,47 @@ void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
 		AnimationAssetsToDuplicate.Remove(Pair.Key);
 	}
 
-	DuplicatedAnimAssets = DuplicateAssets<UAnimationAsset>(AnimationAssetsToDuplicate, DestinationPackage, &Context.NameRule);
-	DuplicatedBlueprints = DuplicateAssets<UAnimBlueprint>(AnimBlueprintsToDuplicate, DestinationPackage, &Context.NameRule);
+	// duplicate each asset individually (not done as a batch so user can cancel)
+	for (UAnimationAsset* Asset : AnimationAssetsToDuplicate)
+	{
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
+		FString AssetName = Asset->GetName();
+		Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("DuplicatingAnimation", "Duplicating animation: {0}"), FText::FromString(AssetName)));
+
+		// if user wants to export files to the same location as the source, then replace the FolderPath in the duplication rule
+		EditorAnimUtils::FNameDuplicationRule NameRule = Context.NameRule;
+		if (Context.bUseSourcePath)
+		{
+			NameRule.FolderPath = FPackageName::GetLongPackagePath(Asset->GetPathName()) / TEXT("");
+		}
+
+		TMap<UAnimationAsset*, UAnimationAsset*> DuplicateMap = DuplicateAssets<UAnimationAsset>({ Asset }, DestinationPackage, &NameRule);
+		DuplicatedAnimAssets.Append(DuplicateMap);
+	}
+	for (UAnimBlueprint* Asset : AnimBlueprintsToDuplicate)
+	{
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
+		FString AssetName = Asset->GetName();
+		Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("DuplicatingBlueprint", "Duplicating blueprint: {0}"), FText::FromString(AssetName)));
+
+		// if user wants to export files to the same location as the source, then replace the FolderPath in the duplication rule
+		EditorAnimUtils::FNameDuplicationRule NameRule = Context.NameRule;
+		if (Context.bUseSourcePath)
+		{
+			NameRule.FolderPath = FPackageName::GetLongPackagePath(Asset->GetPathName()) / TEXT("");
+		}
+
+		TMap<UAnimBlueprint*, UAnimBlueprint*> DuplicateMap = DuplicateAssets<UAnimBlueprint>({ Asset }, DestinationPackage, &NameRule);
+		DuplicatedBlueprints.Append(DuplicateMap);
+	}
 
 	// If we are moving the new asset to a different directory we need to fixup the reimport path.
 	// This should only effect source FBX paths within the project.
@@ -189,7 +199,7 @@ void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
 	// Remapped assets needs the duplicated ones added
 	RemappedAnimAssets.Append(DuplicatedAnimAssets);
 
-	////交换K,V。原来是 {old,new} 交换变成{new,old},这样就可以对旧的资源进行重定向
+	//交换K,V。原来是 {old,new} 交换变成{new,old},这样就可以对旧的资源进行重定向
 	ExchangeMapKeyValue(DuplicatedAnimAssets);
 	ExchangeMapKeyValue(DuplicatedBlueprints);
 
@@ -197,7 +207,7 @@ void FIKRetargetBatchOperation_Copy::DuplicateRetargetAssets(
 	DuplicatedBlueprints.GenerateValueArray(AnimBlueprintsToRetarget);
 }
 
-void FIKRetargetBatchOperation_Copy::RetargetAssets(
+void UIKRetargetBatchOperation_Copy::RetargetAssets(
 	const FIKRetargetBatchOperationContext& Context,
 	FScopedSlowTask& Progress)
 {
@@ -206,20 +216,28 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 
 	for (UAnimationAsset* AssetToRetarget : AnimationAssetsToRetarget)
 	{
-		// synchronize curves between old/new asset
-		UAnimSequence* AnimSequenceToRetarget = Cast<UAnimSequence>(AssetToRetarget);
-		if (AnimSequenceToRetarget)
+		if (Progress.ShouldCancel())
 		{
+			return;
+		}
+
+		// prepare animation sequence asset to receive retargeted animation
+		if (UAnimSequence* AnimSequenceToRetarget = Cast<UAnimSequence>(AssetToRetarget))
+		{
+			FString AssetName = AnimSequenceToRetarget->GetName();
+			Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("PreparingAsset", "Preparing asset: {0}"), FText::FromString(AssetName)));
+
 			// copy curve data from source asset, preserving data in the target if present.
 			UAnimationBlueprintLibrary::CopyAnimationCurveNamesToSkeleton(OldSkeleton, NewSkeleton, AnimSequenceToRetarget, ERawCurveTrackTypes::RCT_Float);
+
 			// clear transform curves since those curves won't work in new skeleton
 			IAnimationDataController& Controller = AnimSequenceToRetarget->GetController();
-			const bool ShouldTransactAnimEdits = false;
-			Controller.OpenBracket(FText::FromString("Generating Retargeted Animation Data"), ShouldTransactAnimEdits);
-			Controller.RemoveAllCurvesOfType(ERawCurveTrackTypes::RCT_Transform, ShouldTransactAnimEdits);
+			constexpr bool bShouldTransact = false;
+			Controller.OpenBracket(FText::FromString("Preparing for retargeted animation."), bShouldTransact);
+			Controller.RemoveAllCurvesOfType(ERawCurveTrackTypes::RCT_Transform, bShouldTransact);
 
 			// clear bone tracks to prevent recompression
-			Controller.RemoveAllBoneTracks(ShouldTransactAnimEdits);
+			Controller.RemoveAllBoneTracks(bShouldTransact);
 
 			// reset all additive animation properties to ensure WYSIWYG playback of additive anims between retargeter and sequence
 			AnimSequenceToRetarget->AdditiveAnimType = EAdditiveAnimationType::AAT_None;
@@ -230,15 +248,17 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 			// set the retarget source to the target skeletal mesh
 			AnimSequenceToRetarget->RetargetSource = NAME_None;
 			AnimSequenceToRetarget->RetargetSourceAsset = Context.TargetMesh;
+			Controller.UpdateWithSkeleton(NewSkeleton, bShouldTransact);
 
 			// done editing sequence data, close bracket
-			Controller.CloseBracket(ShouldTransactAnimEdits);
+			Controller.CloseBracket(bShouldTransact);
 		}
 
 		// replace references to other animation
-		//AssetToRetarget->ReplaceReferredAnimations(RemappedAnimAssets); //Hanmginglu:我们是对旧资源重定向，他们的引用就不用变更了。
-		AssetToRetarget->SetSkeleton(NewSkeleton);
-		AssetToRetarget->SetPreviewMesh(Context.TargetMesh);
+		//AssetToRetarget->ReplaceReferredAnimations(RemappedAnimAssets); //我们是对旧资源重定向，他们的引用就不用变更了。
+
+		AssetToRetarget->SetSkeleton(NewSkeleton); //指定骨架为新的
+		AssetToRetarget->SetPreviewMesh(Context.TargetMesh);//指定mesh
 	}
 
 	// Call PostEditChange after the references of all assets were replaced, to prevent order dependence of post edit
@@ -248,6 +268,11 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 	static FProperty* RetargetAssetProperty = UAnimSequence::StaticClass()->FindPropertyByName(RetargetSourceAssetPropertyName);
 	for (UAnimationAsset* AssetToRetarget : AnimationAssetsToRetarget)
 	{
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
 		// force updating of the retarget pose, this is normally done on PreSave() but is guarded against procedural saves
 		if (UAnimSequence* AnimSequenceToRetarget = Cast<UAnimSequence>(AssetToRetarget))
 		{
@@ -265,6 +290,11 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 	// convert all Animation Blueprints and compile 
 	for (UAnimBlueprint* AnimBlueprint : AnimBlueprintsToRetarget)
 	{
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
 		// replace skeleton
 		AnimBlueprint->TargetSkeleton = NewSkeleton;
 		// replace preview mesh (uses skeleton default otherwise)
@@ -284,7 +314,7 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 
 		if (RemappedAnimAssets.Num() > 0)
 		{
-			
+
 			ReplaceReferredAnimationsInBlueprint(AnimBlueprint, RemappedAnimAssets);
 		}
 		*/
@@ -299,7 +329,7 @@ void FIKRetargetBatchOperation_Copy::RetargetAssets(
 	RemapCurves(Context, Progress);
 }
 
-void FIKRetargetBatchOperation_Copy::ConvertAnimation(
+void UIKRetargetBatchOperation_Copy::ConvertAnimation(
 	const FIKRetargetBatchOperationContext& Context,
 	FScopedSlowTask& Progress)
 {
@@ -337,22 +367,27 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 	// for each pair of source / target animation sequences
 	for (TPair<UAnimationAsset*, UAnimationAsset*>& Pair : DuplicatedAnimAssets)
 	{
+		if (Progress.ShouldCancel())
+		{
+			return;
+		}
+
 		UAnimSequence* SourceSequence = Cast<UAnimSequence>(Pair.Key);
-		UAnimSequence* DestinationSequence = Cast<UAnimSequence>(Pair.Value);
-		if (!(SourceSequence && DestinationSequence))
+		UAnimSequence* TargetSequence = Cast<UAnimSequence>(Pair.Value);
+		if (!(SourceSequence && TargetSequence))
 		{
 			continue;
 		}
 
 		// increment progress bar
-		FString AssetName = DestinationSequence->GetName();
+		FString AssetName = TargetSequence->GetName();
 		Progress.EnterProgressFrame(1.f, FText::Format(LOCTEXT("RunningBatchRetarget", "Retargeting animation asset: {0}"), FText::FromString(AssetName)));
 
 		// remove all keys from the destination animation sequence
-		IAnimationDataController& TargetSeqController = DestinationSequence->GetController();
-		const bool ShouldTransactAnimEdits = false;
-		TargetSeqController.OpenBracket(FText::FromString("Generating Retargeted Animation Data"), ShouldTransactAnimEdits);
-		TargetSeqController.RemoveAllBoneTracks();
+		IAnimationDataController& TargetSeqController = TargetSequence->GetController();
+		constexpr bool bShouldTransact = false;
+		TargetSeqController.OpenBracket(FText::FromString("Generating Retargeted Animation Data"), bShouldTransact);
+		TargetSeqController.RemoveAllBoneTracks(bShouldTransact);
 
 		// number of frames in this animation
 		const int32 NumFrames = SourceSequence->GetNumberOfSampledKeys();
@@ -368,17 +403,22 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 		// ensure we evaluate the source animation using the skeletal mesh proportions that were evaluated in the viewport
 		FAnimPoseEvaluationOptions EvaluationOptions = FAnimPoseEvaluationOptions();
 		EvaluationOptions.OptionalSkeletalMesh = SourceSkeleton.SkeletalMesh;
-
-		//new in 5.4
-		// ensure WYSIWYG with editor by ensuring the same root motion is applied to the pose, not to the component ，
+		// ensure WYSIWYG with editor by ensuring the same root motion is applied to the pose, not to the component
 		EvaluationOptions.bExtractRootMotion = false;
 		EvaluationOptions.bIncorporateRootMotionIntoPose = true;
+
 		// reset the planting state
 		Processor->ResetPlanting();
-		
+
 		// retarget each frame's pose from source to target
 		for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 		{
+			if (Progress.ShouldCancel())
+			{
+				TargetSeqController.CloseBracket(bShouldTransact);
+				return;
+			}
+
 			// get the source global pose
 			FAnimPose SourcePoseAtFrame;
 			UAnimPoseExtensions::GetAnimPoseAtFrame(SourceSequence, FrameIndex, EvaluationOptions, SourcePoseAtFrame);
@@ -394,7 +434,7 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 			// update goals 
 			Processor->ApplySettingsFromAsset();
 
-			// run the retarget
+			// calculate the delta time
 			const float TimeAtCurrentFrame = SourceSequence->GetTimeAtFrame(FrameIndex);
 			float DeltaTime = TimeAtCurrentFrame;
 			if (FrameIndex > 0)
@@ -425,28 +465,27 @@ void FIKRetargetBatchOperation_Copy::ConvertAnimation(
 				FRawAnimSequenceTrack& BoneTrack = BoneTracks[TargetBoneIndex];
 
 				BoneTrack.PosKeys[FrameIndex] = FVector3f(LocalPose.GetLocation());
-				BoneTrack.RotKeys[FrameIndex] = FQuat4f(LocalPose.GetRotation());
+				BoneTrack.RotKeys[FrameIndex] = FQuat4f(LocalPose.GetRotation().GetNormalized());
 				BoneTrack.ScaleKeys[FrameIndex] = FVector3f(LocalPose.GetScale3D());
 			}
-		}
+
+		} // END for each frame
 
 		// add keys to bone tracks
-		const bool bShouldTransact = false;
 		for (int32 TargetBoneIndex = 0; TargetBoneIndex < NumTargetBones; ++TargetBoneIndex)
 		{
 			const FName& TargetBoneName = TargetBoneNames[TargetBoneIndex];
 
 			const FRawAnimSequenceTrack& RawTrack = BoneTracks[TargetBoneIndex];
 			TargetSeqController.AddBoneCurve(TargetBoneName, bShouldTransact);
-			TargetSeqController.SetBoneTrackKeys(TargetBoneName, RawTrack.PosKeys, RawTrack.RotKeys, RawTrack.ScaleKeys);
+			TargetSeqController.SetBoneTrackKeys(TargetBoneName, RawTrack.PosKeys, RawTrack.RotKeys, RawTrack.ScaleKeys, bShouldTransact);
 		}
 
-		// done editing sequence data, close bracket
-		TargetSeqController.CloseBracket(ShouldTransactAnimEdits);
+		TargetSeqController.CloseBracket(bShouldTransact);
 	}
 }
 
-void FIKRetargetBatchOperation_Copy::RemapCurves(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
+void UIKRetargetBatchOperation_Copy::RemapCurves(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
 {
 	USkeleton* SourceSkeleton = Context.SourceMesh->GetSkeleton();
 	USkeleton* TargetSkeleton = Context.TargetMesh->GetSkeleton();
@@ -559,7 +598,7 @@ void FIKRetargetBatchOperation_Copy::RemapCurves(const FIKRetargetBatchOperation
 	}
 }
 
-void FIKRetargetBatchOperation_Copy::OverwriteExistingAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
+void UIKRetargetBatchOperation_Copy::OverwriteExistingAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress)
 {
 	if (!Context.bOverwriteExistingFiles)
 	{
@@ -616,25 +655,39 @@ void FIKRetargetBatchOperation_Copy::OverwriteExistingAssets(const FIKRetargetBa
 	}
 }
 
-void FIKRetargetBatchOperation_Copy::NotifyUserOfResults(
+void UIKRetargetBatchOperation_Copy::NotifyUserOfResults(
 	const FIKRetargetBatchOperationContext& Context,
 	FScopedSlowTask& Progress) const
 {
 	//删除临时文件夹	
 	UEditorAssetLibrary::DeleteDirectory(Context.NameRule.FolderPath);
 
-	Progress.EnterProgressFrame(1.f, FText(LOCTEXT("DoneRetarget", "Skeleton Retarget complete!")));
+	// create pop-up notification in editor UI
+	constexpr float NotificationDuration = 5.0f;
+	if (Progress.ShouldCancel())
+	{
+		Progress.EnterProgressFrame(1.f, FText(LOCTEXT("Cancelled Skeleton Retarget", "Cancelled.")));
 
-	// notify user
-	FNotificationInfo Notification(FText::GetEmpty());
-	Notification.ExpireDuration = 5.f;
-	Notification.Text = FText::Format(
-		LOCTEXT("MultiNonAsset", "Refer assets were retargeted to new skeleton {0}. See Output for details."),
-		FText::FromString(Context.TargetMesh->GetName()));
-	FSlateNotificationManager::Get().AddNotification(Notification);
+		// notify user that retarget was cancelled
+		FNotificationInfo Notification(FText::GetEmpty());
+		Notification.ExpireDuration = NotificationDuration;
+		Notification.Text = FText(LOCTEXT("Skeleton RetargetCancelled", "Skeleton Retarget cancelled."));
+		FSlateNotificationManager::Get().AddNotification(Notification);
+	}
+	else
+	{
+		Progress.EnterProgressFrame(1.f, FText(LOCTEXT("SkeletonRetarget", "Skeleton Retarget complete!")));
+		// notify user that retarget completed
+		FNotificationInfo Notification(FText::GetEmpty());
+		Notification.ExpireDuration = 5.f;
+		Notification.Text = FText::Format(
+			LOCTEXT("MultiNonAsset", "Refer assets were retargeted to new skeleton {0}. See Output for details."),
+			FText::FromString(Context.TargetMesh->GetName()));
+		FSlateNotificationManager::Get().AddNotification(Notification);
+	}
 }
 
-void FIKRetargetBatchOperation_Copy::GetNewAssets(TArray<UObject*>& NewAssets) const
+void UIKRetargetBatchOperation_Copy::GetNewAssets(TArray<UObject*>& NewAssets) const
 {
 	TArray<UAnimationAsset*> NewAnims;
 	DuplicatedAnimAssets.GenerateValueArray(NewAnims);
@@ -651,41 +704,143 @@ void FIKRetargetBatchOperation_Copy::GetNewAssets(TArray<UObject*>& NewAssets) c
 	}
 }
 
-void FIKRetargetBatchOperation_Copy:: GetOldAssets(TArray<UObject*>& OldAssets) const
+void UIKRetargetBatchOperation_Copy::CleanupIfCancelled(const FScopedSlowTask& Progress) const
 {
-	TArray<UAnimationAsset*> NewAnims;
-	DuplicatedAnimAssets.GenerateKeyArray(NewAnims);
-	for (UAnimationAsset* NewAnim : NewAnims)
+	if (!Progress.ShouldCancel())
 	{
-		OldAssets.Add(Cast<UObject>(NewAnim));
+		return;
 	}
 
-	TArray<UAnimBlueprint*> NewBlueprints;
-	DuplicatedBlueprints.GenerateKeyArray(NewBlueprints);
-	for (UAnimBlueprint* NewBlueprint : NewBlueprints)
-	{
-		OldAssets.Add(Cast<UObject>(NewBlueprint));
-	}
+	// get list of all the assets that were created
+	// (to be removed after being cancelled)
+	TArray<UObject*> NewAssets;
+	GetNewAssets(NewAssets);
+
+	// delete any newly created assets
+	constexpr bool bShowConfirmation = true;
+	ObjectTools::DeleteObjects(NewAssets, bShowConfirmation);
 }
 
+TArray<FAssetData> UIKRetargetBatchOperation_Copy::DuplicateAndRetarget(
+	const TArray<FAssetData>& AssetsToRetarget,
+	USkeletalMesh* SourceMesh,
+	USkeletalMesh* TargetMesh,
+	UIKRetargeter* IKRetargetAsset,
+	const FString& Search,
+	const FString& Replace,
+	const FString& Prefix,
+	const FString& Suffix,
+	const bool bIncludeReferencedAssets)
+{
+	// fill the context with all the data needed to run a batch retarget
+	FIKRetargetBatchOperationContext Context;
+	for (const FAssetData& Asset : AssetsToRetarget)
+	{
+		if (UObject* Object = Cast<UObject>(Asset.GetAsset()))
+		{
+			Context.AssetsToRetarget.Add(Object); // convert asset data to soft refs
+		}
+	}
+	Context.SourceMesh = SourceMesh;
+	Context.TargetMesh = TargetMesh;
+	Context.IKRetargetAsset = IKRetargetAsset;
+	Context.NameRule.Prefix = Prefix;
+	Context.NameRule.Suffix = Suffix;
+	Context.NameRule.ReplaceFrom = Search;
+	Context.NameRule.ReplaceTo = Replace;
+	Context.bIncludeReferencedAssets = bIncludeReferencedAssets;
 
-void FIKRetargetBatchOperation_Copy::RunRetarget(FIKRetargetBatchOperationContext& Context)
+	// actually run the batch operation
+	UIKRetargetBatchOperation_Copy* BatchOperation = NewObject<UIKRetargetBatchOperation_Copy>();
+	BatchOperation->AddToRoot();
+	BatchOperation->RunRetarget(Context);
+
+	// create array of FAssetData to return
+	TArray<FAssetData> Results;
+	for (const UAnimationAsset* RetargetedAsset : BatchOperation->AnimationAssetsToRetarget)
+	{
+		Results.Add(FAssetData(RetargetedAsset));
+	}
+
+	BatchOperation->RemoveFromRoot();
+	return Results;
+}
+
+void UIKRetargetBatchOperation_Copy::RunRetarget(FIKRetargetBatchOperationContext& Context)
 {
 	Reset();
 
+	// validate animation assets were provided
 	const int32 NumAssets = GenerateAssetLists(Context);
+	if (NumAssets == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. No animation assets were specified."));
+		return;
+	}
+
+	// validate a retarget asset was provided
+	if (!Context.IKRetargetAsset)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. No IK Retargeter asset was specified."));
+		return;
+	}
+
+	// validate a source IK rig was provided
+	const UIKRigDefinition* SrcIKRig = Context.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Source);
+	if (!SrcIKRig)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. Specified IK Retargeter does not reference a source IK Rig."));
+		return;
+	}
+
+	// validate a target IK rig was provided
+	const UIKRigDefinition* TgtIKRig = Context.IKRetargetAsset->GetIKRig(ERetargetSourceOrTarget::Target);
+	if (!TgtIKRig)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. Specified IK Retargeter does not reference a target IK Rig."));
+		return;
+	}
+
+	// validate a source mesh was provided
+	if (!Context.SourceMesh)
+	{
+		// fallback to mesh provided by IK Rig
+		Context.SourceMesh = SrcIKRig->GetPreviewMesh();
+		if (!Context.SourceMesh)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. No source mesh was specified and the source IK Rig did not have one. "));
+			return;
+		}
+	}
+
+	// validate a target mesh was provided
+	if (!Context.TargetMesh)
+	{
+		// fallback to mesh provided by IK Rig
+		Context.TargetMesh = TgtIKRig->GetPreviewMesh();
+		if (!Context.TargetMesh)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("Batch retarget aborted. No target mesh was specified and the target IK Rig did not have one. "));
+			return;
+		}
+	}
 
 	// show progress bar
-	FScopedSlowTask Progress(NumAssets + 2, LOCTEXT("GatheringBatchRetarget", "Gathering animation assets..."));
-	Progress.MakeDialog();
+	constexpr int32 NumAdditionalProgressFrames = 4;
+	constexpr int32 NumPassesOverAssets = 3;
+	const int32 NumProgressSteps = (NumAssets * NumPassesOverAssets) + NumAdditionalProgressFrames;
+	FScopedSlowTask Progress(NumProgressSteps, LOCTEXT("GatheringBatchRetarget", "Gathering animation assets..."));
+	constexpr bool bShowCancelButton = true;
+	Progress.MakeDialog(bShowCancelButton);
 
 	DuplicateRetargetAssets(Context, Progress);
 	RetargetAssets(Context, Progress);
-	//OverwriteExistingAssets(Context, Progress);
+	OverwriteExistingAssets(Context, Progress);
 	NotifyUserOfResults(Context, Progress);
+	CleanupIfCancelled(Progress);
 }
 
-void FIKRetargetBatchOperation_Copy::Reset()
+void UIKRetargetBatchOperation_Copy::Reset()
 {
 	AnimationAssetsToRetarget.Reset();
 	AnimBlueprintsToRetarget.Reset();
@@ -694,37 +849,4 @@ void FIKRetargetBatchOperation_Copy::Reset()
 	RemappedAnimAssets.Reset();
 }
 
-/**
-* Duplicates the supplied AssetsToDuplicate and returns a map of original asset to duplicate. Templated wrapper that calls DuplicateAssetInternal.
-*
-* @param	AssetsToDuplicate	The animations to duplicate
-* @param	DestinationPackage	The package that the duplicates should be placed in
-* @param	NameRule			The rules for how to rename the duplicated assets
-*
-* @return	TMap of original animation to duplicate
-*/
-template<class AssetType>
-TMap<AssetType*, AssetType*> FIKRetargetBatchOperation_Copy::DuplicateAssets(
-	const TArray<AssetType*>& AssetsToDuplicate,
-	UPackage* DestinationPackage,
-	const FNameDuplicationRule* NameRule)
-{
-	TArray<UObject*> Assets;
-	for (AssetType* Asset : AssetsToDuplicate)
-	{
-		Assets.Add(Asset);
-	}
-
-	// duplicate assets
-	TMap<UObject*, UObject*> DuplicateAssetsMap = DuplicateAssetsInternal(Assets, DestinationPackage, NameRule);
-
-	// cast to AssetType
-	TMap<AssetType*, AssetType*> ReturnMap;
-	for (const TTuple<UObject*, UObject*>& DuplicateAsset : DuplicateAssetsMap)
-	{
-		ReturnMap.Add(Cast<AssetType>(DuplicateAsset.Key), Cast<AssetType>(DuplicateAsset.Value));
-	}
-
-	return ReturnMap;
-}
 #undef LOCTEXT_NAMESPACE

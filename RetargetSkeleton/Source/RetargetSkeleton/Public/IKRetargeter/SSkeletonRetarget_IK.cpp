@@ -364,8 +364,10 @@ FReply SSIKRetargetSkel_AnimAssetsWindow::OnApply()
 {
 	UpdateTempFolder();
 	CloseWindow();
-	FIKRetargetBatchOperation_Copy BatchOperation;
-	BatchOperation.RunRetarget(BatchContext);
+
+	// run the batch retarget
+	const TStrongObjectPtr<UIKRetargetBatchOperation_Copy> BatchOperation(NewObject<UIKRetargetBatchOperation_Copy>());
+	BatchOperation->RunRetarget(BatchContext);
 	return FReply::Handled();
 }
 

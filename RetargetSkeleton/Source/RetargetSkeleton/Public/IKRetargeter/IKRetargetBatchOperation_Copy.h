@@ -16,6 +16,26 @@ struct FScopedSlowTask;
 class USkeletalMesh;
 class UAnimationAsset;
 class UAnimBlueprint;
+class UAnimSequence;
+class USkeleton;
+class IAnimationDataModel;
+class IAnimationDataController;
+
+
+struct FAdditiveRetargetSettings_Copy
+{
+	// the asset this operates on
+	TObjectPtr<UAnimSequence> SequenceAsset;
+
+	// the settings to save/restore before/after retargeting
+	TEnumAsByte<EAdditiveAnimationType> AdditiveAnimType;
+	TEnumAsByte<EAdditiveBasePoseType> RefPoseType;
+	int32 RefFrameIndex;
+	TObjectPtr<UAnimSequence> RefPoseSeq;
+
+	void PrepareForRetarget(UAnimSequence* InSequenceAsset);
+	void RestoreOnAsset() const;
+};
 
 //** Encapsulate ability to batch duplicate and retarget a set of animation assets */
 UCLASS(BlueprintType)
@@ -51,7 +71,8 @@ public:
 		const FString& Replace = "",
 		const FString& Prefix = "",
 		const FString& Suffix = "",
-		const bool bIncludeReferencedAssets=true);
+		const bool bIncludeReferencedAssets = true,
+		const bool bOverwriteExistingFiles = true);
 	
 	// Actually run the process to duplicate and retarget the assets for the given context
 	void RunRetarget(FIKRetargetBatchOperationContext& Context);
@@ -71,10 +92,9 @@ private:
 	void RetargetAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
 
 	// Convert animation on all the duplicates
-	void ConvertAnimation(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
+	void ConvertAnimation(const FIKRetargetBatchOperationContext& Context, FIKRetargetProcessor& OutProcessor, FScopedSlowTask& Progress);
 
-	// Copy/remap curves on all the duplicates
-	void RemapCurves(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
+	void ApplyCurveOps(const FIKRetargetBatchOperationContext& Context, const FIKRetargetProcessor& InProcessor, FScopedSlowTask& Progress);
 
 	// Replace existing assets (optional)
 	void OverwriteExistingAssets(const FIKRetargetBatchOperationContext& Context, FScopedSlowTask& Progress);
@@ -87,6 +107,10 @@ private:
 
 	// If user cancelled half way, cleanup all the duplicated assets
 	void CleanupIfCancelled(const FScopedSlowTask& Progress) const;
+
+	void AddCurveValuesToAnimSequence(USkeleton* InTargetSkeleton, const FIKRetargetOpBase::FCurveData& InCurveMetaData,
+		const FIKRetargetOpBase::FFrameValues& InCurveValuesPerFrame, const FFrameRate& InFrameRate, const TArray<FFrameTime>& InFrameTimes, bool bInShouldTransact, IAnimationDataController& OutTargetSeqController) const;
+
 	
 	// Lists of assets to retarget. Populated from selection during init
 	TArray<UAnimationAsset*>	AnimationAssetsToRetarget;

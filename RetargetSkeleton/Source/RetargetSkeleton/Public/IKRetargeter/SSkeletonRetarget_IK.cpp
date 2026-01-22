@@ -49,7 +49,7 @@ void SIKRetargetSkel_PoseViewport::SetSkeletalMesh(USkeletalMesh* InSkeltalMesh)
 		PreviewComponent->SetSkeletalMesh(Mesh);
 		PreviewComponent->EnablePreview(true, nullptr);
 		// todo add IK retargeter and set it to output the retarget pose
-		PreviewComponent->PreviewInstance->SetForceRetargetBasePose(true);
+		//PreviewComponent->PreviewInstance->SetForceRetargetBasePose(true);
 		PreviewComponent->RefreshBoneTransforms(nullptr);
 
 		//Place the camera at a good viewer position
@@ -90,10 +90,6 @@ TSharedRef<FEditorViewportClient> SIKRetargetSkel_PoseViewport::MakeEditorViewpo
 	return EditorViewportClient.ToSharedRef();
 }
 
-TSharedPtr<SWidget> SIKRetargetSkel_PoseViewport::MakeViewportToolbar()
-{
-	return nullptr;
-}
 
 
 

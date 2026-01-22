@@ -33,7 +33,6 @@ protected:
 
 	/** SEditorViewport interface */
 	virtual TSharedRef<FEditorViewportClient> MakeEditorViewportClient() override;
-	virtual TSharedPtr<SWidget> MakeViewportToolbar() override;
 	/** END SEditorViewport interface */
 
 private:
